@@ -47,38 +47,38 @@ def get_hot_deals():
     soup = BeautifulSoup(response.text, 'html.parser')
     hot_deals = []
     
-    # Find deal cards - Slickdeals uses various selectors
-    deal_containers = soup.find_all(['div', 'li', 'article'], class_=re.compile(r'(deal|fpItem|gridItem)', re.I))
+    # Find all deal card content containers (this is the main deal structure)
+    deal_cards = soup.find_all(class_='dealCard__content')
     
-    for container in deal_containers:
-        # Check for fire emoji or "hot" indicator
-        container_text = container.get_text()
-        has_fire = '🔥' in container_text or 'Popular' in container_text or 'Hot' in container_text
+    for card in deal_cards:
+        # Get the parent to check for hot/popular badges
+        parent = card.find_parent(class_=re.compile(r'dealCard'))
+        if not parent:
+            parent = card
         
-        # Also check for fire icon classes
-        fire_icon = container.find(class_=re.compile(r'(fire|hot|flame|popular)', re.I))
-        if fire_icon:
+        parent_text = parent.get_text()
+        
+        # Check for fire emoji or popular/hot indicators
+        has_fire = '🔥' in parent_text
+        
+        # Check for popular badge
+        popular_badge = parent.find(class_=re.compile(r'popular|trending|fire|hot', re.I))
+        if popular_badge:
             has_fire = True
             
-        # Check for the specific "dealTilePopular" or similar hot indicators
-        if container.find(class_=re.compile(r'(popular|trending)', re.I)):
-            has_fire = True
+        # Check for "Popular" text in badges
+        badges = parent.find_all(class_=re.compile(r'badge', re.I))
+        for badge in badges:
+            if 'popular' in badge.get_text().lower() or 'hot' in badge.get_text().lower():
+                has_fire = True
+                break
         
         if not has_fire:
             continue
-            
-        # Extract deal info
-        deal = extract_deal_info(container)
+        
+        deal = extract_deal_info(card)
         if deal and deal.get('title'):
             hot_deals.append(deal)
-    
-    # Also check the frontpage deals grid specifically
-    fp_deals = soup.find_all(class_=re.compile(r'(fpDeal|frontpageDeal)', re.I))
-    for fp in fp_deals:
-        if '🔥' in fp.get_text() or fp.find(class_=re.compile(r'fire|hot|popular', re.I)):
-            deal = extract_deal_info(fp)
-            if deal and deal.get('title') and deal not in hot_deals:
-                hot_deals.append(deal)
     
     # Remove duplicates based on title
     seen_titles = set()
@@ -88,11 +88,13 @@ def get_hot_deals():
             seen_titles.add(deal['title'])
             unique_deals.append(deal)
     
+    print(f"Debug: Found {len(deal_cards)} total deal cards, {len(unique_deals)} hot deals")
+    
     return unique_deals
 
 
 def extract_deal_info(container):
-    """Extract deal information from a container element."""
+    """Extract deal information from a dealCard__content container."""
     deal = {
         'title': '',
         'price': '',
@@ -102,50 +104,76 @@ def extract_deal_info(container):
         'image': ''
     }
     
-    # Find title - usually in an anchor or heading
+    # Find title - look for dealCard__title class first
     title_elem = (
-        container.find('a', class_=re.compile(r'(title|dealTitle|itemTitle)', re.I)) or
-        container.find(['h2', 'h3', 'h4']) or
-        container.find('a', href=re.compile(r'/f/'))
+        container.find(class_='dealCard__title') or
+        container.find('a', class_=re.compile(r'title', re.I)) or
+        container.find(['h2', 'h3', 'h4'])
     )
     
     if title_elem:
-        deal['title'] = title_elem.get_text(strip=True)
-        if title_elem.get('href'):
-            href = title_elem['href']
-            if not href.startswith('http'):
-                href = 'https://slickdeals.net' + href
-            deal['link'] = href
+        # Get the anchor if title_elem is not already one
+        if title_elem.name != 'a':
+            link_elem = title_elem.find('a')
+            if link_elem:
+                deal['title'] = link_elem.get_text(strip=True)
+                href = link_elem.get('href', '')
+            else:
+                deal['title'] = title_elem.get_text(strip=True)
+                href = ''
+        else:
+            deal['title'] = title_elem.get_text(strip=True)
+            href = title_elem.get('href', '')
+        
+        if href and not href.startswith('http'):
+            href = 'https://slickdeals.net' + href
+        deal['link'] = href
     
-    # Find image
-    img_elem = container.find('img')
+    # Find image - specifically look for dealCard__image class
+    img_elem = container.find(class_='dealCard__image')
+    if not img_elem:
+        # Fallback: find img in imageContainer
+        img_container = container.find(class_='dealCard__imageContainer')
+        if img_container:
+            img_elem = img_container.find('img')
+    if not img_elem:
+        # Last fallback: any img that's not an avatar
+        for img in container.find_all('img'):
+            if 'avatar' not in img.get('class', []) and 'avatar' not in str(img.get('class', '')):
+                img_elem = img
+                break
+    
     if img_elem:
-        img_src = img_elem.get('src') or img_elem.get('data-src') or img_elem.get('data-lazy-src')
+        # Try multiple attributes for lazy-loaded images
+        img_src = (
+            img_elem.get('src') or 
+            img_elem.get('data-src') or 
+            img_elem.get('data-lazy-src') or
+            img_elem.get('data-original')
+        )
         if img_src:
             if not img_src.startswith('http'):
                 img_src = 'https://slickdeals.net' + img_src
-            # Skip placeholder/icon images
-            if 'placeholder' not in img_src.lower() and 'icon' not in img_src.lower():
+            # Skip placeholder/icon/avatar images
+            if not any(x in img_src.lower() for x in ['placeholder', 'icon', 'avatar', 'logo']):
                 deal['image'] = img_src
     
-    # Find price
-    price_elem = container.find(class_=re.compile(r'(price|dealPrice)', re.I))
+    # Find price - look for dealCard__price
+    price_elem = container.find(class_=re.compile(r'dealCard__price|price', re.I))
     if price_elem:
-        deal['price'] = price_elem.get_text(strip=True)
-    else:
-        # Look for dollar amounts in text
-        text = container.get_text()
-        price_match = re.search(r'\$[\d,]+\.?\d*', text)
+        price_text = price_elem.get_text(strip=True)
+        # Extract just the first price (current price, not crossed out)
+        price_match = re.search(r'\$[\d,]+\.?\d*', price_text)
         if price_match:
             deal['price'] = price_match.group()
     
     # Find store name
-    store_elem = container.find(class_=re.compile(r'(store|merchant)', re.I))
+    store_elem = container.find(class_=re.compile(r'dealCard__store|store|merchant', re.I))
     if store_elem:
         deal['store'] = store_elem.get_text(strip=True)
     
     # Find vote count
-    vote_elem = container.find(class_=re.compile(r'(vote|score|thumb)', re.I))
+    vote_elem = container.find(class_=re.compile(r'dealCard__vote|vote|score|thumb', re.I))
     if vote_elem:
         deal['votes'] = vote_elem.get_text(strip=True)
     
