@@ -98,7 +98,8 @@ def extract_deal_info(container):
         'price': '',
         'store': '',
         'link': '',
-        'votes': ''
+        'votes': '',
+        'image': ''
     }
     
     # Find title - usually in an anchor or heading
@@ -115,6 +116,17 @@ def extract_deal_info(container):
             if not href.startswith('http'):
                 href = 'https://slickdeals.net' + href
             deal['link'] = href
+    
+    # Find image
+    img_elem = container.find('img')
+    if img_elem:
+        img_src = img_elem.get('src') or img_elem.get('data-src') or img_elem.get('data-lazy-src')
+        if img_src:
+            if not img_src.startswith('http'):
+                img_src = 'https://slickdeals.net' + img_src
+            # Skip placeholder/icon images
+            if 'placeholder' not in img_src.lower() and 'icon' not in img_src.lower():
+                deal['image'] = img_src
     
     # Find price
     price_elem = container.find(class_=re.compile(r'(price|dealPrice)', re.I))
@@ -184,11 +196,24 @@ def create_email_html(deals):
         
         for deal in deals:
             html += f"""
-            <div class="deal">
-                <div class="deal-title">
-                    🔥 <a href="{deal['link']}" target="_blank">{deal['title']}</a>
+            <div class="deal" style="display: flex; align-items: flex-start; gap: 15px;">
+            """
+            
+            if deal.get('image'):
+                html += f"""
+                <div style="flex-shrink: 0;">
+                    <a href="{deal['link']}" target="_blank">
+                        <img src="{deal['image']}" alt="" style="width: 100px; height: 100px; object-fit: contain; border-radius: 4px;">
+                    </a>
                 </div>
-                <div class="deal-meta">
+                """
+            
+            html += f"""
+                <div style="flex-grow: 1;">
+                    <div class="deal-title">
+                        🔥 <a href="{deal['link']}" target="_blank">{deal['title']}</a>
+                    </div>
+                    <div class="deal-meta">
             """
             
             if deal['price']:
@@ -199,6 +224,7 @@ def create_email_html(deals):
                 html += f'<span class="votes">({deal["votes"]} votes)</span>'
                 
             html += """
+                    </div>
                 </div>
             </div>
             """
