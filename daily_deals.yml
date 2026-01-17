@@ -1,0 +1,31 @@
+name: Daily Slickdeals Hot Deals
+
+on:
+  schedule:
+    # Runs at 8 AM EST (1 PM UTC) every day
+    - cron: '0 13 * * *'
+  workflow_dispatch:  # Allows manual trigger for testing
+
+jobs:
+  send-deals:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4
+      
+      - name: Run deals script
+        env:
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+        run: python slickdeals_hot_deals.py
